@@ -23,9 +23,12 @@
  */
 typedef struct alarm_tag {
     struct alarm_tag    *link;
+    int                request; /*start or cancel alarm*/
     int                 seconds;
-    time_t              time;   /* seconds from EPOCH */
-    char                message[64];
+    int                 message_number; 
+    char                mess[8]; //"message"
+    time_t              time;    /* seconds from EPOCH */
+    char                message[128];
 } alarm_t;
 
 pthread_mutex_t alarm_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -151,13 +154,18 @@ void *alarm_thread (void *arg)
         }
     }
 }
+void *periodic_display_threads(void *arg){
 
+}
 int main (int argc, char *argv[])
 {
-    int status;
-    char line[128];
+    int status, par, par2;
+    char line[160];
     alarm_t *alarm;
     pthread_t thread;
+    char d; //delimiter 
+    char cancel[8];
+    char c[] = "Cancel:";
 
     status = pthread_create (
         &thread, NULL, alarm_thread, NULL);
@@ -173,14 +181,33 @@ int main (int argc, char *argv[])
 
         /*
          * Parse input line into seconds (%d) and a message
-         * (%64[^\n]), consisting of up to 64 characters
+         * (%128[^\n]), consisting of up to 128 characters
          * separated from the seconds by whitespace.
          */
-        if (sscanf (line, "%d %64[^\n]", 
-            &alarm->seconds, alarm->message) < 2) {
+
+        par = sscanf (line, "%d %[^( ,] %c %[^)] %c %128[^\n]", &alarm->seconds, alarm->mess, 
+                         &d, &alarm->message_number, &d, alarm->message);
+        //check for 1st valid input type
+        if(par != 6){ 
+        //check for 2nd valid input type                
+            par2 = sscanf (line, "%s %[^( ,] %c %[^)] %c ", cancel, alarm->mess, 
+                         &d, &alarm->message_number, &d);
+        }
+        
+
+        if (!(par ==6 ||(par2 == 5 && strcmp(c,cancel) == 0))) {
             fprintf (stderr, "Bad command\n");
+            //printf("%d %s(%d) %s\n",alarm->seconds,alarm->mess,alarm->message_number,alarm->message);
             free (alarm);
-        } else {
+        }
+        //if (sscanf (line, "%d %128[^\n]", 
+        //    &alarm->seconds, alarm->message) < 2) {
+        //    fprintf (stderr, "Bad command\n");
+        //    free (alarm);
+        //} 
+        else {
+            //printf("par= %d par2= %d\n", par, par2);
+
             status = pthread_mutex_lock (&alarm_mutex);
             if (status != 0)
                 err_abort (status, "Lock mutex");
