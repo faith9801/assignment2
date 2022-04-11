@@ -47,14 +47,20 @@ void print_alarm_list() {
 
     sem_wait(&mutex);
     read_count++;
+
     if(read_count == 1)
         sem_wait(&rw_mutex);
     sem_post(&mutex);
 
     printf ("[list: ");
-    for (next = a_list; next != NULL; next = next->link)
+    
+    // CHANGED for loop to while loop ------------------------
+    next = a_list;
+    while(next != NULL){    
         printf ("%ld(%ld)[\"%s\"]", next->time,
-            next->time - time (NULL), next->message);
+        next->time - time (NULL), next->message);
+        next = next->link;
+    }
     printf ("]\n");
 
     sem_wait(&mutex);
@@ -68,10 +74,13 @@ void print_alarm_list() {
 alarm_t *get_alarm_at(int m_id) {
     alarm_t *next;
 
+    // CHANGED for loop to while ------------
     if(a_list != NULL) {
-        for(next = a_list; next != NULL; next = next->link) {
-            if(next->message_number == m_id)
-                return next;
+        next = a_list;
+        while(next != NULL){
+        if(next->message_number == m_id)
+            return next;
+        next = next->link
         }
     }
 }
@@ -145,8 +154,9 @@ void cancel_alarm (alarm_t *alarm) {
  * Wakes the alarm thread if it is not busy, or if a new alarm
  * arrives before the one on which the alarm thread is waiting for.
  */
+// VARIABLE CHANGE status to s
 void alarm_insert(alarm_t *alarm) {
-    int status;
+    int s;
     alarm_t **last, *next;
 
     sem_wait(&rw_mutex);
@@ -186,9 +196,9 @@ void alarm_insert(alarm_t *alarm) {
      */
     if (current_alarm == 0 || alarm->time < current_alarm) {
         current_alarm = alarm->time;
-        status = pthread_cond_signal (&alarm_cond);
-        if (status != 0)
-            err_abort (status, "Signal cond");
+        s = pthread_cond_signal (&alarm_cond);
+        if (s != 0)
+            err_abort (s, "Signal cond");
     }
 
     sem_post(&rw_mutex);
