@@ -6,23 +6,18 @@
  * new version will have two periodic display threads in addition
  * to the main and alarm thread in the alarm_cond.c program.
  */
-
-/* CHANGED VARIABLES
-alarm_list to a_list, 
-status to s,
-
-*/
 #include <pthread.h>
 #include <time.h>
 #include "errors.h"
 #include <semaphore.h>
+#include <stdbool.h>
 
 typedef struct alarm_tag {
     struct alarm_tag    *link;
     int                 seconds;
-    int                 message_number; /* Message identifier */
-    int                 cancellable; /* Either 0 or 1 */
-    int                 replaced;
+    int                 mssg_num; 
+    int                 cancel; 
+    int                 replacable;
     time_t              time;   /* Seconds from EPOCH */
     char                message[128]; /* Message */
 } alarm_t;
@@ -30,7 +25,7 @@ typedef struct alarm_tag {
 pthread_mutex_t alarm_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t alarm_cond = PTHREAD_COND_INITIALIZER;
 alarm_t *a_list = NULL;
-int current_alarm = 0;
+int curnt_alarm = 0;
 
 /*
  * In charge of printing the list of alarms. Since the function
@@ -42,25 +37,19 @@ sem_t rw_mutex;
 sem_t mutex;
 int read_count = 0;
 
-void print_alarm_list() {
+void print_a_list() {
     alarm_t *next;
 
     sem_wait(&mutex);
     read_count++;
-
     if(read_count == 1)
         sem_wait(&rw_mutex);
     sem_post(&mutex);
 
     printf ("[list: ");
-    
-    // CHANGED for loop to while loop ------------------------
-    next = a_list;
-    while(next != NULL){    
+    for (next = a_list; next != NULL; next = next->link)
         printf ("%ld(%ld)[\"%s\"]", next->time,
-        next->time - time (NULL), next->message);
-        next = next->link;
-    }
+            next->time - time (NULL), next->message);
     printf ("]\n");
 
     sem_wait(&mutex);
@@ -74,23 +63,19 @@ void print_alarm_list() {
 alarm_t *get_alarm_at(int m_id) {
     alarm_t *next;
 
-    // CHANGED for loop to while ------------
     if(a_list != NULL) {
-        next = a_list;
-        while(next != NULL){
-        if(next->message_number == m_id)
-            return next;
-        next = next->link
+        for(next = a_list; next != NULL; next = next->link) {
+            if(next->mssg_num == m_id)
+                return next;
         }
     }
+    return 0;
 }
 
 /*
  * Checks whether an alarm exists in the alarm list with the message
  * number of a newly received alarm request and return true or false.
  */
-// CHANGED ---------
-
 int message_id_exists(int m_id) {
     alarm_t *alarm = get_alarm_at(m_id);
     
@@ -104,7 +89,7 @@ int message_id_exists(int m_id) {
 /*
  * If an alarm request of Type A is received and there exists an
  * alarm of Type A in the alarm list with the same message number,
- * then the old alarm is replaced by this function.
+ * then the old alarm is replacable by this function.
  */
 void find_and_replace(alarm_t *new_alarm) {
     alarm_t *old_alarm;
@@ -112,10 +97,10 @@ void find_and_replace(alarm_t *new_alarm) {
 
     sem_wait(&rw_mutex);
 
-    old_alarm = get_alarm_at(new_alarm->message_number);
+    old_alarm = get_alarm_at(new_alarm->mssg_num);
     old_alarm->seconds = new_alarm->seconds;
     old_alarm->time = time(NULL) + new_alarm->seconds;
-    old_alarm->replaced = 1;
+    old_alarm->replacable = 1;
     strcpy(old_alarm->message , new_alarm->message);
 
     sem_post(&rw_mutex);
@@ -124,8 +109,6 @@ void find_and_replace(alarm_t *new_alarm) {
 /*
  * Used to remove any nodes (alarm requests) from the alarm list.
  */
-// CHANGED if statements
-
 void cancel_alarm (alarm_t *alarm) {
     alarm_t *prev = a_list;
 
@@ -154,52 +137,57 @@ void cancel_alarm (alarm_t *alarm) {
  * Wakes the alarm thread if it is not busy, or if a new alarm
  * arrives before the one on which the alarm thread is waiting for.
  */
-// VARIABLE CHANGE status to s
 void alarm_insert(alarm_t *alarm) {
     int s;
-    alarm_t **last, *next;
-
-    sem_wait(&rw_mutex);
-    /*
-     * LOCKING PROTOCOL!!!
-     */
+    alarm_t **last;
+    alarm_t *next;
     last = &a_list;
     next = *last;
-    while (next != NULL) {
-        if (next->message_number >= alarm->message_number) {
-            alarm->link = next;
-            *last = alarm;
-            break;
+    bool flag = true;
+    sem_wait(&rw_mutex);
+    
+    
+    while (next) {
+        if (next->mssg_num >= alarm->mssg_num) {
+            if (flag == true){
+                alarm->link = next;
+                *last = alarm;
+                break;
+            }
         }
         last = &next->link;
         next = next->link;
     }
-    /*
-     * If we reached the end of the list, insert the new alarm
-     * there. ("next" is NULL, and "last" points to the link
-     * field of the last item, or to the list header.)
-     */
+    
     if (next == NULL) {
         *last = alarm;
         alarm->link = NULL;
     }
 
-    // A.3.2.1
+    
     printf("First Alarm Request With Message Number (%d) Received at <%ld>: <%d %s>\n",
-        alarm->message_number, time(NULL), alarm->seconds, alarm->message);
+        alarm->mssg_num, time(NULL), alarm->seconds, alarm->message);
 
-    /*
-     * Wake the alarm thread if it is not busy (that is, if
-     * current_alarm is 0, signifying that it's waiting for
-     * work), or if the new alarm comes before the one on
-     * which the alarm thread is waiting.
-     */
-    if (current_alarm == 0 || alarm->time < current_alarm) {
-        current_alarm = alarm->time;
-        s = pthread_cond_signal (&alarm_cond);
-        if (s != 0)
+    
+    if (curnt_alarm == 0) {
+        int current = alarm->time;
+        curnt_alarm = current;
+        s = (pthread_cond_signal (&alarm_cond))- 1;
+        s = s+1; //test
+        if (s > 0 || s < 0)
+            err_abort (s, "Signal cond");
+
+    }
+
+    else if( alarm->time < curnt_alarm){
+        int current = alarm->time;
+        curnt_alarm = current;
+        s = (pthread_cond_signal (&alarm_cond))- 1;
+        s = s+1; //test
+        if (s > 0 || s < 0)
             err_abort (s, "Signal cond");
     }
+    
 
     sem_post(&rw_mutex);
 }
@@ -212,13 +200,13 @@ void alarm_insert(alarm_t *alarm) {
  * request was received.
  */
 void *periodic_display_thread(void *alarm_in) {
-    int alarm_replaced = 0;
+    int alarm_replacable = 0;
     alarm_t *alarm = (alarm_t*) alarm_in;
     alarm_t *next;
     int status;
-    // CHANGED to for loop
-    for(int i=0; i=i) {
-        if(a_list != NULL) {
+
+    while(1) {
+        if(a_list) {
             next = a_list;
 
             sem_wait(&mutex);
@@ -227,26 +215,26 @@ void *periodic_display_thread(void *alarm_in) {
                 sem_wait(&rw_mutex);
             sem_post(&mutex);
 
-            while(next->message_number != alarm->message_number)
+            while(next->mssg_num != alarm->mssg_num)
                 next = next->link;
 
-            if(next == NULL || alarm->cancellable > 0) {
+            if(next == NULL || alarm->cancel > 0) {
                 printf("Display thread exiting at <%ld>: <%d %s>\n",
                     time(NULL), alarm->seconds, alarm->message);
                 break;
-            } else if(next->replaced == 1) {
-                if(alarm_replaced == 0) {
-                     printf("Alarm With Message Number (%d) Replaced at <%ld>: <%d %s>\n",
-                    alarm->message_number, time(NULL), alarm->seconds, alarm->message);
+            } else if(next->replacable == 1) {
+                if(alarm_replacable == 0) {
+                     printf("Alarm With Message Number (%d) replacable at <%ld>: <%d %s>\n",
+                    alarm->mssg_num, time(NULL), alarm->seconds, alarm->message);
                 }
 
                 printf("Replacement Alarm With Message Number (%d) Displayed at <%ld>: <%d %s>\n",
-                    next->message_number, time(NULL), next->seconds, next->message);
-                alarm_replaced = 1;
+                    next->mssg_num, time(NULL), next->seconds, next->message);
+                alarm_replacable = 1;
                 sleep(next->seconds);
             } else {
                 printf("Alarm With Message Number (%d) Displayed at <%ld>: <%d %s>\n",
-                    alarm->message_number, time(NULL), alarm->seconds, alarm->message);
+                    alarm->mssg_num, time(NULL), alarm->seconds, alarm->message);
                 sleep(alarm->seconds);
             }
 
@@ -258,6 +246,7 @@ void *periodic_display_thread(void *alarm_in) {
 
         }
     }
+    return 0;
 }
 
 /*
@@ -269,32 +258,43 @@ void *periodic_display_thread(void *alarm_in) {
  * to remove the appropriate nodes (alarm requests) from the alarm
  * list. Lastly, it will print a message to the user to let them know
  * the alarm has been processed and the time at which it was processed.
- */ //CHANGED by
+ *  CHANGED ********************
+ */
 void *alarm_thread(void *arg) {
     pthread_t display_t;
     alarm_t *alarm;
-    int status;
+    int status, expired;
+    int alarm_stat = 0;
+   bool flag = true;
+if(flag){
+    while(flag) {
+        if (a_list == NULL) {
+            break;
+        }
+        else{
+            alarm = get_alarm_at(curnt_alarm);
 
-    while(1) {
-        if (a_list != NULL) {
-            alarm = get_alarm_at(current_alarm);
-
-            if(alarm->cancellable == 0){
+            if(alarm->cancel == 0){
                 status = pthread_create(&display_t, NULL, periodic_display_thread, (void *)alarm);
-                if(status != 0)
+                if(status > 0 || status < 0)
                     err_abort(status, "Create periodic display thread");
-            } else {
+            }
+            else if (alarm->cancel == 0){
+                alarm_stat ++;
+            } 
+            else {
                 cancel_alarm(alarm);
             }
-            printf("Alarm Request With Message Number (%d) Processed at <%ld>: <%d %s>\n",
-                alarm->message_number, time(NULL), alarm->seconds, alarm->message);
-
-            status = pthread_cond_wait (&alarm_cond, &alarm_mutex);
-            if (status != 0)
-                err_abort (status, "Wait on cond");
+            printf("The Alarm with the message number (%d) was processed at <%ld>: <%d %s>\n",
+                alarm->mssg_num, time(NULL), alarm->seconds, alarm->message);
+            int stat = pthread_cond_wait (&alarm_cond, &alarm_mutex);
+            status = stat;
+            if(status > 0 || status < 0)
+                err_abort (status, "Cond should be waited on");
         }
     }
 
+}
 }
 
 /*
@@ -302,20 +302,19 @@ void *alarm_thread(void *arg) {
  * actions with regard to how they should be handled.
  */
 int main (int argc, char *argv[]) {
-    int s;
+    int status;
     int cancel_message_id = 0;
     char line[256];
     alarm_t *alarm;
     pthread_t thread;
-    bool flag = true;
 
     //semaphore init
-    sem_init(&mutex, 0, 1);
-    sem_init(&rw_mutex, 0, 1);
+    // sem_init(&mutex, 0, 1);
+    // sem_init(&rw_mutex, 0, 1);
 
-    s = pthread_create (&thread, NULL, alarm_thread, NULL);
-    if (s != 0)
-        err_abort (s, "Create alarm thread");
+    status = pthread_create (&thread, NULL, alarm_thread, NULL);
+    if (status != 0)
+        err_abort (status, "Create alarm thread");
 
         // Clear the terminal window.
         printf("\e[1;1H\e[2J");
@@ -329,68 +328,66 @@ int main (int argc, char *argv[]) {
         printf("You may add successive alarm requests in the same format at any time during execution\n");
         printf("To cancel an alarm request, use the following format: Cancel: Message(*)\n");
         printf("Disclaimer: Some alternate inputs will be dealt with accordingly,\n\n");
-    // CHANGED if added
-    if(flag){
-        while (flag) {
-            if (fgets (line, sizeof (line), stdin) == NULL) exit (0);
-            if (strlen (line) <= 1) continue;
-            alarm = (alarm_t*)malloc (sizeof (alarm_t));
 
-            if (alarm == NULL)
-                errno_abort ("Allocate alarm");
+    while (1) {
+        if (fgets (line, sizeof (line), stdin) == NULL) exit (0);
+        if (strlen (line) <= 1) continue;
+        alarm = (alarm_t*)malloc (sizeof (alarm_t));
 
-            int insert_command_parse = sscanf(line, "%d Message(%d) %128[^\n]",
-                &alarm->seconds, &alarm->message_number, alarm->message);
-            int cancel_command_parse = sscanf(line, "Cancel: Message(%d)", &cancel_message_id);
+        if (alarm == NULL)
+            errno_abort ("Allocate alarm");
 
-            if(insert_command_parse == 3 && alarm->seconds > 0 && alarm->message_number > 0) {
-                // Check if the message_number exits in the alarm list
-                if(message_id_exists(alarm->message_number) == 0) {
-                    alarm->time = time (NULL) + alarm->seconds;
-                    alarm->cancellable = 0;
-                    alarm->replaced = 0;
-                    current_alarm = alarm->message_number;
+        int insert_command_parse = sscanf(line, "%d Message(%d) %128[^\n]",
+            &alarm->seconds, &alarm->mssg_num, alarm->message);
+        int cancel_command_parse = sscanf(line, "Cancel: Message(%d)", &cancel_message_id);
 
-                    s = pthread_mutex_lock (&alarm_mutex);
-                    if (s != 0)
-                        err_abort (s, "Lock mutex");
+        if(insert_command_parse == 3 && alarm->seconds > 0 && alarm->mssg_num > 0) {
+            // Check if the mssg_num exits in the alarm list
+            if(message_id_exists(alarm->mssg_num) == 0) {
+                alarm->time = time (NULL) + alarm->seconds;
+                alarm->cancel = 0;
+                alarm->replacable = 0;
+                curnt_alarm = alarm->mssg_num;
 
-                    /*
-                    * Insert the new alarm into the list of alarms,
-                    * sorted by message_number.
-                    */
-                    alarm_insert (alarm);
-                    pthread_cond_signal(&alarm_cond);
+                status = pthread_mutex_lock (&alarm_mutex);
+                if (status != 0)
+                    err_abort (status, "Lock mutex");
 
-                    s = pthread_mutex_unlock (&alarm_mutex);
-                    if (s != 0)
-                        err_abort (s, "Unlock mutex");
-                } else {
-                    find_and_replace(alarm);
-                    // A3.2.2 Print Statement
-                    printf("Replacement Alarm Request With Message Number (%d) Received at <%ld>: <%d %s>\n",
-                        alarm->message_number, time(NULL), alarm->seconds, alarm->message);
-                }
+                /*
+                 * Insert the new alarm into the list of alarms,
+                 * sorted by mssg_num.
+                 */
+                alarm_insert (alarm);
+                pthread_cond_signal(&alarm_cond);
 
-            } else if(cancel_command_parse == 1)  {
-                if(message_id_exists(cancel_message_id) == 0) {
-                    printf("Error: No Alarm Request With Message Number (%d) to Cancel!\n", cancel_message_id);
-                } else{
-                    alarm_t *at_alarm = get_alarm_at(cancel_message_id);
-                    if (at_alarm->cancellable > 0)
-                        printf("Error: More Than One Request to Cancel Alarm Request With Message Number (%d)!\n", cancel_message_id);
-                    else {
-                        at_alarm->cancellable = at_alarm->cancellable + 1;
-                        current_alarm = at_alarm->message_number;
-                        pthread_cond_signal(&alarm_cond);
-                        printf("Cancel Alarm Request With Message Number (%d) Received at <%ld>: <%d %s>\n",
-                            at_alarm->message_number, time(NULL), at_alarm->seconds, at_alarm->message);
-                    }
-                }
+                status = pthread_mutex_unlock (&alarm_mutex);
+                if (status != 0)
+                    err_abort (status, "Unlock mutex");
             } else {
-                fprintf (stderr, "Invalid command.\n");
-                free (alarm);
+                find_and_replace(alarm);
+                // A3.2.2 Print Statement
+                printf("Replacement Alarm Request With Message Number (%d) Received at <%ld>: <%d %s>\n",
+                    alarm->mssg_num, time(NULL), alarm->seconds, alarm->message);
             }
+
+        } else if(cancel_command_parse == 1)  {
+            if(message_id_exists(cancel_message_id) == 0) {
+                printf("Error: No Alarm Request With Message Number (%d) to Cancel!\n", cancel_message_id);
+            } else{
+                alarm_t *at_alarm = get_alarm_at(cancel_message_id);
+                if (at_alarm->cancel > 0)
+                    printf("Error: More Than One Request to Cancel Alarm Request With Message Number (%d)!\n", cancel_message_id);
+                else {
+                    at_alarm->cancel = at_alarm->cancel + 1;
+                    curnt_alarm = at_alarm->mssg_num;
+                    pthread_cond_signal(&alarm_cond);
+                    printf("Cancel Alarm Request With Message Number (%d) Received at <%ld>: <%d %s>\n",
+                        at_alarm->mssg_num, time(NULL), at_alarm->seconds, at_alarm->message);
+                }
+            }
+        } else {
+            fprintf (stderr, "Invalid command.\n");
+            free (alarm);
         }
     }
 }
