@@ -136,6 +136,7 @@ void cancel_alarm (alarm_t *alarm) {
 /*
  * Wakes the alarm thread if it is not busy, or if a new alarm
  * arrives before the one on which the alarm thread is waiting for.
+ * CHANGED SOME WHILE LOOPS 
  */
 void alarm_insert(alarm_t *alarm) {
     int s;
